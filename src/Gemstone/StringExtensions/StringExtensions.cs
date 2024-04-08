@@ -89,6 +89,7 @@
 // ReSharper disable ConditionIsAlwaysTrueOrFalseAccordingToNullableAPIContract
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
@@ -120,8 +121,7 @@ public static class StringExtensions
     /// <returns><see cref="StringComparer"/> for the specified <see cref="StringComparison"/>.</returns>
     public static StringComparer GetComparer(this StringComparison comparison) => s_comparisonComparers[comparison];
 
-#if NET6_0_OR_GREATER
-        
+#if NET
     /// <summary>
     /// Throws an <see cref="ArgumentNullException"/> if <paramref name="argument"/> is null -or-
     /// an <see cref="ArgumentException"/> if <paramref name="argument"/> is Empty.
@@ -140,7 +140,6 @@ public static class StringExtensions
     [DoesNotReturn] // This allows ThrowIfNullOrEmpty to be inlined
     private static void ThrowArgumentEmptyException(string? paramName) =>
         throw new ArgumentException("Argument cannot be empty", paramName);
-
 #endif
 
     /// <summary>
@@ -250,6 +249,32 @@ public static class StringExtensions
         // Initialize culture info if not specified.
         culture ??= CultureInfo.InvariantCulture;
 
+        // Handle array types as a special case
+        if (type.IsArray)
+        {
+            Type elementType = type.GetElementType()!;
+            string[] items = value.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+            Array array = Array.CreateInstance(elementType, items.Length);
+
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(ConvertToType(items[i], elementType, culture)!, i);
+
+            return array;
+        }
+
+        // Handle list types as a special case
+        if (IsGenericIList(type))
+        {
+            Type listType = typeof(List<>).MakeGenericType(type.GetGenericArguments()[0]);
+            IList list = (IList)Activator.CreateInstance(listType)!;
+
+            // Parse list values
+            foreach (string item in value.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
+                list.Add(ConvertToType(item, type.GetGenericArguments()[0], culture)!);
+
+            return list;
+        }
+
         try
         {
             // Handle booleans as a special case to allow numeric entries as well as true/false
@@ -266,6 +291,16 @@ public static class StringExtensions
         {
             LibraryEvents.OnSuppressedException(typeof(Common), new Exception($"ConvertToType exception: {ex.Message}", ex));
             return null;
+        }
+
+        static bool TypeIsGenericIList(Type type)
+        {
+            return type.IsGenericType && type.GetGenericTypeDefinition() == typeof(List<>);
+        }
+
+        static bool IsGenericIList(Type type)
+        {
+            return TypeIsGenericIList(type) || type.GetInterfaces().Any(TypeIsGenericIList);
         }
     }
 
@@ -1143,6 +1178,62 @@ public static class StringExtensions
         {
             Marshal.ZeroFreeGlobalAllocUnicode(intPtr);
         }
+    }
+
+    /// <summary>
+    /// Converts the provided string, assumed to be title, pascal or camel case formatted, to a label with spaces before each capital letter, other than the first.
+    /// </summary>
+    /// <param name="value">Input string.</param>
+    /// <returns>Formatted enumeration name of the specified value for visual display.</returns>
+    public static string ToSpacedLabel(this string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return string.Empty;
+
+        StringBuilder image = new();
+        char[] chars = value.ToCharArray();
+
+        for (int i = 0; i < chars.Length; i++)
+        {
+            char letter = chars[i];
+
+            // Create word spaces at every capital letter
+            if (char.IsUpper(letter) && image.Length > 0)
+            {
+                // Check for all caps sequence (e.g., ID)
+                if (char.IsUpper(chars[i - 1]))
+                {
+                    // Look ahead for proper breaking point
+                    if (i + 1 < chars.Length)
+                    {
+                        if (char.IsLower(chars[i + 1]))
+                        {
+                            image.Append(' ');
+                            image.Append(letter);
+                        }
+                        else
+                        {
+                            image.Append(letter);
+                        }
+                    }
+                    else
+                    {
+                        image.Append(letter);
+                    }
+                }
+                else
+                {
+                    image.Append(' ');
+                    image.Append(letter);
+                }
+            }
+            else
+            {
+                image.Append(letter);
+            }
+        }
+
+        return image.ToString();
     }
 
     /// <summary>

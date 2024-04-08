@@ -43,18 +43,21 @@
 //
 //******************************************************************************************************
 // ReSharper disable CompareOfFloatsByEqualityOperator
-#pragma warning disable CS0649 // Field is never assigned to, and will always have its default value
 
 using System;
+using System.Collections;
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Gemstone.Console;
 using Gemstone.StringExtensions;
 using Gemstone.Units;
-using JetBrains.Annotations;
+using static Gemstone.Interop.WindowsApi;
 
 namespace Gemstone;
 
@@ -86,8 +89,7 @@ public enum UpdateType
 /// </summary>
 public static class Common
 {
-    //private static string? s_osPlatformName;
-    //private static PlatformID s_osPlatformID = PlatformID.Win32S;
+    private static string? s_applicationName;
 
     /// <summary>
     /// Determines if the current system is a POSIX style environment.
@@ -99,11 +101,18 @@ public static class Common
     /// </para>
     /// <para>
     /// This property will return <c>true</c> for both MacOSX and Unix environments. Use the Platform property
-    /// of the <see cref="System.Environment.OSVersion"/> to determine more specific platform type, e.g., 
+    /// of the <see cref="Environment.OSVersion"/> to determine more specific platform type, e.g., 
     /// MacOSX or Unix.
     /// </para>
     /// </remarks>        
     public static readonly bool IsPosixEnvironment = !RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+
+
+    /// <summary>
+    /// Gets the name of the current application.
+    /// </summary>
+    public static string ApplicationName =>
+        s_applicationName ??= Assembly.GetEntryAssembly()?.GetName().Name ?? Process.GetCurrentProcess().ProcessName;
 
     /// <summary>
     /// Converts <paramref name="value"/> to a <see cref="string"/> using an appropriate <see cref="TypeConverter"/>.
@@ -129,6 +138,7 @@ public static class Common
     /// </summary>
     /// <param name="value">Value to convert to a <see cref="string"/>.</param>
     /// <param name="culture"><see cref="CultureInfo"/> to use for the conversion.</param>
+    /// <param name="throwOnFail">Set to <c>true</c> to throw exception if conversion fails; otherwise, <c>false</c> to fall back on <c>.ToString()</c>.</param>
     /// <returns><paramref name="value"/> converted to a <see cref="string"/>.</returns>
     /// <remarks>
     /// <para>
@@ -141,7 +151,7 @@ public static class Common
     /// the string back to its original <see cref="Type"/>.
     /// </para>
     /// </remarks>
-    public static string TypeConvertToString(object? value, CultureInfo? culture)
+    public static string TypeConvertToString(object? value, CultureInfo? culture, bool throwOnFail = false)
     {
         switch (value)
         {
@@ -151,6 +161,8 @@ public static class Common
             // If value is already a string, no need to attempt conversion
             case string stringVal:
                 return stringVal;
+            case IList list:
+                return string.Join(";", list.Cast<object>().Select(item => TypeConvertToString(item, culture, throwOnFail)));
             default:
                 // Initialize culture info if not specified.
                 culture ??= CultureInfo.InvariantCulture;
@@ -165,6 +177,9 @@ public static class Common
                 }
                 catch
                 {
+                    if (throwOnFail)
+                        throw;
+
                     // Otherwise just call object's ToString method
                     return value.ToNonNullString();
                 }
@@ -447,6 +462,7 @@ public static class Common
     /// This function will properly detect the platform ID, even if running on Mac.
     /// </remarks>
     /// ReSharper disable once InconsistentNaming
+    [Obsolete("Use Environment.OSVersion.Platform instead")]
     public static PlatformID GetOSPlatformID()
     {
         return Environment.OSVersion.Platform;
@@ -486,6 +502,7 @@ public static class Common
     /// </summary>
     /// <returns>Operating system product name.</returns>
     // ReSharper disable once InconsistentNaming
+    [Obsolete("Use RuntimeInformation.OSDescription instead")]
     public static string GetOSProductName()
     {
         return RuntimeInformation.OSDescription;
@@ -616,43 +633,4 @@ public static class Common
         MEMORYSTATUSEX memStatus = new();
         return GlobalMemoryStatusEx(memStatus) ? memStatus.ullAvailPhys : 0;
     }
-
-    [return: MarshalAs(UnmanagedType.Bool)]
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-    private static extern bool GlobalMemoryStatusEx([In] [Out] MEMORYSTATUSEX lpBuffer);
-
-    // ReSharper disable IdentifierTypo
-    // ReSharper disable InconsistentNaming
-    // ReSharper disable NotAccessedField.Local
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
-    [NoReorder]
-    private class MEMORYSTATUSEX
-    {
-        #region [ Members ]
-
-        public uint dwLength;
-        public uint dwMemoryLoad;
-        public ulong ullTotalPhys;
-        public ulong ullAvailPhys;
-        public ulong ullTotalPageFile;
-        public ulong ullAvailPageFile;
-        public ulong ullTotalVirtual;
-        public ulong ullAvailVirtual;
-        public ulong ullAvailExtendedVirtual;
-
-        #endregion
-
-        #region [ Constructors ]
-
-        // ReSharper disable once ConvertConstructorToMemberInitializers
-        public MEMORYSTATUSEX()
-        {
-            dwLength = (uint)Marshal.SizeOf(typeof(MEMORYSTATUSEX));
-        }
-
-        #endregion
-    }
-    // ReSharper restore NotAccessedField.Local
-    // ReSharper restore InconsistentNaming
-    // ReSharper restore IdentifierTypo}
 }
